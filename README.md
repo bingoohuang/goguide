@@ -83,6 +83,16 @@
     - [在循环中使用闭包](#在循环中使用闭包)
   - [Linting](#linting)
     - [Lint Runners](#lint-runners)
+  - [并发](#并发)
+  - [同步和竞争条件不足](#同步和竞争条件不足)
+    - [HTTP 处理函数可以安全地从多个 goroutines 并发调用吗？](#http-处理函数可以安全地从多个-goroutines-并发调用吗)
+    - [是否存在某些字段或变量访问不受互斥体保护，其中字段或变量是基本类型，或类型不是显式线程安全的(如 `atomic.Value` ) ，而该字段可以从并发 goroutine 更新？](#是否存在某些字段或变量访问不受互斥体保护其中字段或变量是基本类型或类型不是显式线程安全的如-atomicvalue--而该字段可以从并发-goroutine-更新)
+    - [线程安全类型的方法不返回指向受保护结构的指针？](#线程安全类型的方法不返回指向受保护结构的指针)
+    - [如果有多个 goroutine 可以更新 `sync.Map`，您会根据 `m.Load ()` 成功来调用 `m.Store()`或 `m.Delete ()` 吗？](#如果有多个-goroutine-可以更新-syncmap您会根据-mload--成功来调用-mstore或-mdelete--吗)
+  - [可伸缩性](#可伸缩性)
+    - [这是创建一个容量为零的通道么，如 `make (chan * Foo)` ？](#这是创建一个容量为零的通道么如-make-chan--foo-)
+    - [与普通 `sync.Mutex` 相比，使用 `RWMutex` 会带来额外的开销](#与普通-syncmutex-相比使用-rwmutex-会带来额外的开销)
+    - [时间](#时间)
   - [参考资料](#参考资料)
 
 ## 介绍
@@ -765,7 +775,6 @@ type Config struct {
 [15190]: https://github.com/golang/go/issues/15190
 
 <!-- TODO: section on String methods for enums -->
-
 
 ### Errors
 
@@ -3617,6 +3626,157 @@ golangci-lint 有[various-linters]可供使用。建议将上述linters作为基
 [.golangci.yml]: https://github.com/uber-go/guide/blob/master/.golangci.yml
 [various-linters]: https://golangci-lint.run/usage/linters/
 
+## 并发
+
+## 同步和竞争条件不足
+
+### HTTP 处理函数可以安全地从多个 goroutines 并发调用吗？
+
+很容易忽略 HTTP 处理程序应该是线程安全的，因为它们通常不是从任何项目代码中显式调用的，而只是从 HTTP 服务器的内部调用的。
+
+### 是否存在某些字段或变量访问不受互斥体保护，其中字段或变量是基本类型，或类型不是显式线程安全的(如 `atomic.Value` ) ，而该字段可以从并发 goroutine 更新？
+
+由于非原子硬件写入和潜在的内存可见性问题，即使跳过对基本变量的同步读取也是不安全的。另请参见 [典型的数据竞争: 基本的无保护变量](https://golang.org/doc/articles/race_detector#Primitive_unprotected_variable)
+
+### 线程安全类型的方法不返回指向受保护结构的指针？
+
+这是一个微妙的错误，它导致了前一项中描述的不受保护的访问问题。例如:
+
+```go
+type Counters struct {
+  mu   sync.Mutex
+  vals map[Key]*Counter
+}
+
+func (c *Counters) Add(k Key, amount int) {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    count, ok := c.vals[k]
+    if !ok {
+      count = &Counter{sum: 0, num: 0}
+      c.vals[k] = count
+    }
+    count.sum += amount
+    count.n += 1
+}
+
+func (c *Counters) GetCounter(k Key) *Counter {
+  c.mu.Lock()
+  defer c.mu.Unlock()
+  return c.vals[k] // BUG! Returns a pointer to the structure which must be protected
+}
+```
+
+  一种可能的解决方案是返回一个副本，而不是 GetCounter ()中的结构指针:
+
+```go
+type Counters struct {
+    mu   sync.Mutex
+    vals map[Key]Counter // Note that now we are storing the Counters directly, not pointers.
+}
+
+...
+
+func (c *Counters) GetCounter(k Key) (count Counter, exists bool) {
+  c.mu.Lock()
+  defer c.mu.Unlock()
+  return c.vals[k]
+}
+```
+
+### 如果有多个 goroutine 可以更新 `sync.Map`，您会根据 `m.Load ()` 成功来调用 `m.Store()`或 `m.Delete ()` 吗？
+
+换句话说，以下代码是不雅的:
+
+```go
+var m sync.Map
+
+// Can be called concurrently from multiple goroutines
+func DoSomething(k Key, v Value) {
+	existing, ok := m.Load(k)
+	if !ok {
+		m.Store(k, v) // RACE CONDITION - two goroutines can execute this in parallel
+		... some other logic, assuming the value in `k` is now `v` in the map
+    }
+    ...
+}
+```
+
+这样的竞争条件在某些情况下可能是良性的: 例如，`Load()`和 `Store()` 调用之间的逻辑计算要缓存在映射中的值，这种计算总是返回相同的结果，没有副作用。
+如果竞态条件不是良性的，请使用 `sync.Map.LoadOrStore()` 和 `LoadAndDelete()` 方法来修复它。
+
+## 可伸缩性
+
+### 这是创建一个容量为零的通道么，如 `make (chan * Foo)` ？
+
+将消息发送到零容量通道的 goroutine 被阻塞，直到另一个 goroutine 接收到该消息。忽略 make ()调用中的容量可能只是一个错误，这将限制代码的可伸缩性，而且单元测试很可能不会发现这样的错误。
+
+### 与普通 `sync.Mutex` 相比，使用 `RWMutex` 会带来额外的开销
+
+当前在 Go 实现的 `RWMutex` 可能存在一些可伸缩性问题。除非情况非常明显(比如用 `RWMutex` 同步许多只读操作，每个只读操作持续数百毫秒或更长时间，并且需要独占锁的写操作很少发生) ，否则应该有一些基准来证明 `RWMutex` 确实有助于提高性能。`RWMutex` 弊大于利的一个典型例子是对结构中变量的简单保护:
+
+```go
+type Box struct {
+	mu sync.RWMutex // DON'T DO THIS -- use a simple Mutex instead.
+	x  int
+}
+
+func (b *Box) Get() int {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.x
+}
+
+func (b *Box) Set(x int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.x = x
+}
+```
+
+### 时间
+
+Tm.1. 使用 `defer tick.Stop()` 停止 `time.Ticker` 了吗？
+
+当循环中使用 `time.Ticker` 返回时，没有 `tick.Stop()` 是一种内存泄漏。
+
+Tm.2. `time.Time` 的比较使用 `Equal()`，而不是 == ?
+
+引用时间的文档时间:
+
+> 注意，Go == 操作符不仅比较时间瞬间，还比较位置和单调时钟读数。因此，时间值不应该用作 map 或数据库键，除非首先保证所有值都设置了相同的位置，这可以通过使用 UTC()或 Local()方法来实现，并且通过设置 t = t.Round(0) 来剥离单调的时钟读数。
+> 一般来说，使用 `t.Equal(u)`, 而不是  `t == u` ，因为 `t.Equal(u)` 使用可用的最精确的比较，并正确处理只有一个参数具有单调时钟读数的情况。
+
+Tm.3. 在调用 `time.Since(t)` 之前，`monotonic` 部分不从 t 中去除？ 如果从时 time.Time 结构中的 `monotonic` 部分（通过调用 UTC()、 Local()、 In()、 Round()、 Truncate() 或 AddDate())，调用 `time.Since(t)` 可能在罕见情况下是负值，例如系统时间在最初获得启动时间的时刻和 time.Since 被调用之间被 NTP 同步过。因为()被称为。如果不去除 `monotonic` ， time.Since总是返回一个正值。
+
+Tm.4. 如果你想通过 t.Before(u) 来比较系统时间，在(u)之前，你是否从参数中`monotonic` 部分，例如通过 `u.Round(0)` ？
+
+这是与 Tm.2. 有关的另一点。有时候，你需要比较两个 time.Time 结构仅由其中存储的系统时间构成，具体来说。在将这些 time.Time 结构之一存储在磁盘上或通过网络发送它们之前，可能需要使用这个参数。例如，想象一下，某种 telemetry 指标代理将指标与时间周期性地一起推送到某个远程系统:
+
+```go
+var latestSentTime time.Time
+
+func pushMetricPeriodically(ctx context.Context) {
+	t := time.NewTicker(time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done: return
+		case <-t.C:
+			newTime := time.Now().Round(0) // Strip monotonic component to compare system time only
+			// Check that the new time is later to avoid messing up the telemetry if the system time
+			// is set backwards on an NTP sync.
+			if latestSentTime.Before(newTime) {
+				sendOverNetwork(NewDataPoint(newTime, metric()))
+				latestSentTime = newTime
+			}
+		}
+	}
+}
+```
+
+如果不调用 Round (0) ，也就是去除单调分量，那么这个代码就是错误的。
+
 ## 参考资料
 
 1. [Uber Go 语言编码规范](https://github.com/uber-go/guide), [Uber Go 语言编码规范中文版](https://github.com/xxjwxc/uber_go_guide_cn)
@@ -3624,3 +3784,4 @@ golangci-lint 有[various-linters]可供使用。建议将上述linters作为基
 3. [effective_go](https://golang.org/doc/effective_go.html)
 4. [CodeReviewComments](https://github.com/golang/go/wiki/CodeReviewComments)
 5. [Golang Development Guide](https://github.com/megaease/community/blob/master/go-development-guide.md)
+6. [CodeReviewConcurrency](https://github.com/golang/go/wiki/CodeReviewConcurrency)
