@@ -10,6 +10,8 @@
   - [指导原则](#指导原则)
     - [指向 interface 的指针](#指向-interface-的指针)
     - [Interface 合理性验证](#interface-合理性验证)
+    - [空接口相当于什么也没说](#空接口相当于什么也没说)
+    - [小接口优于大接口](#小接口优于大接口)
     - [接收器 (receiver) 与接口](#接收器-receiver-与接口)
     - [零值 Mutex 是有效的](#零值-mutex-是有效的)
     - [在边界处拷贝 slices 和 maps](#在边界处拷贝-slices-和-maps)
@@ -219,6 +221,69 @@ func (h LogHandler) ServeHTTP(
   // ...
 }
 ```
+
+### 空接口相当于什么也没说
+
+Go 谚语中认可的是："interface {} says nothing"，也就是 interface {} 什么也没说。
+
+接口类型，没有明确的类型自描述，会在编程、协作、文档等均带来一定的麻烦，就跟什么都没说一样。不建议频繁使用。
+
+<table>
+<thead><tr><th>Bad</th><th>Good</th></tr></thead>
+<tbody>
+<tr><td>
+
+```go
+func Eat(v interface{}) {  }
+```
+
+</td><td>
+
+```go
+func Eat(v string) {  }
+```
+
+</td></tr>
+
+<tr><td>
+上面的函数签名，当然知道调用 Eat 函数要传 string 类型了，不是传什么 int 类型。
+</td><td>
+上面的函数签名，请问变量 v 到底传什么，传 int 类型，还是 string 类型，又或是都可以？
+</td></tr>
+
+</tbody></table>
+
+当我们在阅读 Go 代码时。如果文档、命名、、参数（含类型）是清晰的，可靠的。我们大概率会直接调用，明确的类型会更让我们有 ” 安全感 “，知道要传什么值。
+如果一个函数的参数的类型是 interface {}，我们就会进函数内看其具体的实现，以此寻求确定性。
+
+正如谚语中所说，定义了 interface {}，是什么都没说，显然是 “不大好的味道”，这样的代码无法自描述。程序员得翻代码或文档（文档还不一定更新的及时）。
+
+注：在公司真见到这种场景，该位同学猜不透，大呼绝绝子，翻代码去了。
+
+### 小接口优于大接口
+
+在 Go 的标准库中，package io 的 io.Reader 和 io.Writer 接口是官方认可的教科书式案例，小而美的接口是编写强大而灵活的 Go 代码的关键。
+
+```go
+type Reader interface {
+ Read(p []byte) (n int, err error)
+}
+
+type Writer interface {
+ Write(p []byte) (n int, err error)
+}
+```
+
+**小接口与大接口相比，用户认知的心智和实现成本较低。**
+
+小接口和大接口：
+
+- 当一个接口定义拥有 6 个或更多的接口方法时，它非常的鸡肋，一般只有自身唯一的具体实现和用于测试的模拟实现。
+- 建议多采取小接口的方式，认知和实现成本低。官方认可的最佳实践是 io.Reader 和 io.Writer 接口，太大的接口并没有太多的好处。
+
+另外从历史的角度来看， io.Reader 和 io.Writer 接口并不是前期设计的，它们是后来发现的。Network、File 和其他字节处理类型需要共享类似的实现，才诞生的 io.Reader 和 io.Writer 。
+
+“最佳实践” 都是实践、探索、演变出来的。
 
 ### 接收器 (receiver) 与接口
 
@@ -794,7 +859,7 @@ type Config struct {
 [`errors.As`]: https://golang.org/pkg/errors/#As
 
 | 错误匹配? | 错误消息 | 指导                                |
-| --------- | -------- | ----------------------------------- |
+|-----------|----------|-------------------------------------|
 | No        | static   | [`errors.New`]                      |
 | No        | dynamic  | [`fmt.Errorf`]                      |
 | Yes       | static   | top-level `var` with [`errors.New`] |
