@@ -39,6 +39,7 @@
     - [追加时优先指定切片容量](#追加时优先指定切片容量)
     - [主函数退出方式(Exit)](#主函数退出方式exit)
       - [一次性退出](#一次性退出)
+      - [处理信号](#处理信号)
     - [在序列化结构中使用字段标记](#在序列化结构中使用字段标记)
   - [性能](#性能)
     - [优先使用 strconv 而不是 fmt](#优先使用-strconv-而不是-fmt)
@@ -54,10 +55,12 @@
     - [import 分组](#import-分组)
     - [包名](#包名)
     - [函数名](#函数名)
+    - [main 函数优先](#main-函数优先)
     - [导入别名](#导入别名)
     - [函数分组与顺序](#函数分组与顺序)
     - [减少嵌套](#减少嵌套)
     - [不必要的 else](#不必要的-else)
+    - [保持快乐路径靠左](#保持快乐路径靠左)
     - [顶层变量声明](#顶层变量声明)
     - [对于未导出的顶层常量和变量，使用_作为前缀](#对于未导出的顶层常量和变量使用_作为前缀)
     - [结构体中的嵌入](#结构体中的嵌入)
@@ -77,14 +80,18 @@
     - [字符串 string format](#字符串-string-format)
     - [命名 Printf 样式的函数](#命名-printf-样式的函数)
   - [编程模式](#编程模式)
-    - [表驱动测试](#表驱动测试)
     - [功能选项](#功能选项)
+    - [偏向使用纯函数](#偏向使用纯函数)
   - [Gotchas，常见坑](#gotchas常见坑)
     - [Reader 接口](#reader-接口)
     - [Context 赋值](#context-赋值)
     - [在循环中使用闭包](#在循环中使用闭包)
   - [Linting](#linting)
     - [Lint Runners](#lint-runners)
+  - [单元测试](#单元测试)
+    - [使用断言库](#使用断言库)
+    - [使用子测试用例组织功能测试](#使用子测试用例组织功能测试)
+    - [表驱动测试](#表驱动测试)
   - [并发](#并发)
   - [同步和竞争条件不足](#同步和竞争条件不足)
     - [HTTP 处理函数可以安全地从多个 goroutines 并发调用吗？](#http-处理函数可以安全地从多个-goroutines-并发调用吗)
@@ -134,7 +141,7 @@
 
 ```go
 type F interface {
-  f()
+	f()
 }
 
 type S1 struct{}
@@ -174,8 +181,8 @@ type Handler struct {
   // ...
 }
 func (h *Handler) ServeHTTP(
-  w http.ResponseWriter,
-  r *http.Request,
+	w http.ResponseWriter,
+	r *http.Request,
 ) {
   ...
 }
@@ -185,14 +192,14 @@ func (h *Handler) ServeHTTP(
 
 ```go
 type Handler struct {
-  // ...
+	// ...
 }
 // 用于触发编译期的接口的合理性检查机制
 // 如果Handler没有实现http.Handler,会在编译期报错
 var _ http.Handler = (*Handler)(nil)
 func (h *Handler) ServeHTTP(
-  w http.ResponseWriter,
-  r *http.Request,
+	w http.ResponseWriter,
+	r *http.Request,
 ) {
   // ...
 }
@@ -266,13 +273,57 @@ func Eat(v string) {  }
 
 ```go
 type Reader interface {
- Read(p []byte) (n int, err error)
+	Read(p []byte) (n int, err error)
 }
 
 type Writer interface {
- Write(p []byte) (n int, err error)
+	Write(p []byte) (n int, err error)
 }
 ```
+
+<table>
+<thead><tr><th>Bad</th><th>Good</th></tr></thead>
+<tbody>
+<tr><td>
+
+```go
+type Server interface {
+	Serve() error
+	Some() int
+	Fields() float64
+	That() string
+	Are([]byte) error
+	Not() []string
+	Necessary() error
+}
+
+func debug(srv Server) {
+	fmt.Println(srv.String())
+}
+
+func run(srv Server) {
+	srv.Serve()
+}
+```
+
+</td><td>
+
+```go
+type Server interface {
+	Serve() error
+}
+
+func debug(v fmt.Stringer) {
+	fmt.Println(v.String())
+}
+
+func run(srv Server) {
+	srv.Serve()
+}
+```
+
+</td></tr>
+</tbody></table>
 
 **小接口与大接口相比，用户认知的心智和实现成本较低。**
 
@@ -1012,8 +1063,7 @@ if err := foo.Open("testfile.txt"); err != nil {
 ```go
 s, err := store.New()
 if err != nil {
-    return fmt.Errorf(
-        "failed to create new store: %w", err)
+    return fmt.Errorf("failed to create new store: %w", err)
 }
 ```
 
@@ -1022,8 +1072,7 @@ if err != nil {
 ```go
 s, err := store.New()
 if err != nil {
-    return fmt.Errorf(
-        "new store: %w", err)
+    return fmt.Errorf( "new store: %w", err)
 }
 ```
 
@@ -1104,6 +1153,38 @@ fmt.Errorf("create file %s failed: %v", fileName, err)
 fmt.Errorf("create file %s err: %v", fileName, err)
 fmt.Errorf("create file %s failed, err: %v", fileName, err)
 ```
+
+<table>
+<thead><tr><th>Bad</th><th>Good</th></tr></thead>
+<tbody>
+<tr><td>
+
+```go
+file, err := os.Open("foo.txt")
+if err != nil {
+	return err
+}
+```
+
+</td><td>
+
+```go
+file, err := os.Open("foo.txt")
+if err != nil {
+	return fmt.Errorf("open foo.txt failed: %w", err)
+}
+```
+
+</td></tr><tr><td>
+
+上下文缺失，导致错误信息不明确。
+
+</td><td>
+
+添加上下文，丰富错误堆栈。
+
+</td></tr>
+</tbody></table>
 
 ### 处理断言失败
 
@@ -1738,6 +1819,7 @@ func readFile(path string) (string, error) {
 - 不明显的控制流：任何函数都可以退出程序，因此很难对控制流进行推理。
 - 难以测试：退出程序的函数也将退出调用它的测试。这使得函数很难测试，并引入了跳过 `go test` 尚未运行的其他测试的风险。
 - 跳过清理：当函数退出程序时，会跳过已经进入`defer`队列里的函数调用。这增加了跳过重要清理任务的风险。
+
 #### 一次性退出
 
 如果可能的话，你的`main（）`函数中 **最多一次** 调用 `os.Exit`或者`log.Fatal`。如果有多个错误场景停止程序执行，请将该逻辑放在单独的函数下并从中返回错误。
@@ -1801,6 +1883,55 @@ func run() error {
 
 </td></tr>
 </tbody></table>
+
+#### 处理信号
+
+<table>
+<thead><tr><th>Bad</th><th>Good</th></tr></thead>
+<tbody>
+<tr><td>
+
+```go
+func main() {
+	for {
+		time.Sleep(1 * time.Second)
+		ioutil.WriteFile("foo", []byte("bar"), 0644)
+	}
+}
+```
+
+</td><td>
+
+```go
+func main() {
+	logger := // ...
+	sc := make(chan os.Signal, 1)
+	done := make(chan bool)
+
+	go func() {
+		for {
+			select {
+			case s := <-sc:
+				logger.Info("Received signal, stopping application",
+					zap.String("signal", s.String()))
+				done <- true
+				return
+			default:
+				time.Sleep(1 * time.Second)
+				ioutil.WriteFile("foo", []byte("bar"), 0644)
+			}
+		}
+	}()
+
+	signal.Notify(sc, os.Interrupt, os.Kill)
+	<-done // Wait for go-routine
+}
+```
+
+</td></tr>
+</tbody></table>
+
+处理信号使我们能够优雅地停止服务器，关闭打开的文件和连接，从而防止文件损坏。
 
 ### 在序列化结构中使用字段标记
 
@@ -2236,7 +2367,7 @@ func (c *client) request() {
 1. 简洁、且见名知义
 1. 采用通用、大众熟知的缩写命名。比如buf而不是bufio
 1. 如果缩写的名字会产生歧义，则放弃或换个
-2. 常量、变量、类型、结构体、接口、函数、方法、属性等，全部使用驼峰法 MixedCaps 或 mixedCaps。
+1. 常量、变量、类型、结构体、接口、函数、方法、属性等，全部使用驼峰法 MixedCaps 或 mixedCaps。
 
 ### import 分组
 
@@ -2294,6 +2425,60 @@ import (
 我们遵循 Go 社区关于使用 [MixedCaps 作为函数名] 的约定。有一个例外，为了对相关的测试用例进行分组，函数名可能包含下划线，如：`TestMyFunction_WhatIsBeingTested`.
 
 [MixedCaps 作为函数名]: https://golang.org/doc/effective_go.html#mixed-caps
+
+### main 函数优先
+
+将 main() 放在前面可以使得读起来更加容易。
+
+<table>
+<thead><tr><th>Bad</th><th>Good</th></tr></thead>
+<tbody>
+<tr><td>
+
+```go
+package main // import "github.com/me/my-project"
+
+func someHelper() int {
+	// ...
+}
+
+func someOtherHelper() string {
+	// ...
+}
+
+func Handler(w http.ResponseWriter, r *http.Reqeust) {
+	// ...
+}
+
+func main() {
+	// ...
+}
+```
+
+</td><td>
+
+```go
+package main // import "github.com/me/my-project"
+
+func main() {
+	// ...
+}
+
+func Handler(w http.ResponseWriter, r *http.Reqeust) {
+	// ...
+}
+
+func someHelper() int {
+	// ...
+}
+
+func someOtherHelper() string {
+	// ...
+}
+```
+
+</td></tr>
+</tbody></table>
 
 ### 导入别名
 
@@ -2465,6 +2650,35 @@ if b {
 
 </td></tr>
 </tbody></table>
+
+### 保持快乐路径靠左
+
+<table>
+<thead><tr><th>Bad</th><th>Good</th></tr></thead>
+<tbody>
+<tr><td>
+
+```go
+if item, ok := someMap[someKey]; ok {
+	return item
+}
+return ErrKeyNotFound
+```
+
+</td><td>
+
+```go
+item, ok := someMap[someKey]
+if !ok {
+	return ErrKeyNotFound
+}
+return item
+```
+
+</td></tr>
+</tbody></table>
+
+右边的方式，可以保证代码清晰可读。
 
 ### 顶层变量声明
 
@@ -3288,126 +3502,6 @@ $ go vet -printfuncs=wrapf,statusf
 
 ## 编程模式
 
-### 表驱动测试
-
-当测试逻辑是重复的时候，通过  [subtests] 使用 table 驱动的方式编写 case 代码看上去会更简洁。
-
-[subtests]: https://blog.golang.org/subtests
-
-<table>
-<thead><tr><th>Bad</th><th>Good</th></tr></thead>
-<tbody>
-<tr><td>
-
-```go
-// func TestSplitHostPort(t *testing.T)
-
-host, port, err := net.SplitHostPort("192.0.2.0:8000")
-require.NoError(t, err)
-assert.Equal(t, "192.0.2.0", host)
-assert.Equal(t, "8000", port)
-
-host, port, err = net.SplitHostPort("192.0.2.0:http")
-require.NoError(t, err)
-assert.Equal(t, "192.0.2.0", host)
-assert.Equal(t, "http", port)
-
-host, port, err = net.SplitHostPort(":8000")
-require.NoError(t, err)
-assert.Equal(t, "", host)
-assert.Equal(t, "8000", port)
-
-host, port, err = net.SplitHostPort("1:8")
-require.NoError(t, err)
-assert.Equal(t, "1", host)
-assert.Equal(t, "8", port)
-```
-
-</td><td>
-
-```go
-// func TestSplitHostPort(t *testing.T)
-
-tests := []struct{
-  give     string
-  wantHost string
-  wantPort string
-}{
-  {
-    give:     "192.0.2.0:8000",
-    wantHost: "192.0.2.0",
-    wantPort: "8000",
-  },
-  {
-    give:     "192.0.2.0:http",
-    wantHost: "192.0.2.0",
-    wantPort: "http",
-  },
-  {
-    give:     ":8000",
-    wantHost: "",
-    wantPort: "8000",
-  },
-  {
-    give:     "1:8",
-    wantHost: "1",
-    wantPort: "8",
-  },
-}
-
-for _, tt := range tests {
-  t.Run(tt.give, func(t *testing.T) {
-    host, port, err := net.SplitHostPort(tt.give)
-    require.NoError(t, err)
-    assert.Equal(t, tt.wantHost, host)
-    assert.Equal(t, tt.wantPort, port)
-  })
-}
-```
-
-</td></tr>
-</tbody></table>
-
-很明显，使用 test table 的方式在代码逻辑扩展的时候，比如新增 test case，都会显得更加的清晰。
-
-我们遵循这样的约定：将结构体切片称为`tests`。 每个测试用例称为`tt`。此外，我们鼓励使用`give`和`want`前缀说明每个测试用例的输入和输出值。
-
-```go
-tests := []struct{
-  give     string
-  wantHost string
-  wantPort string
-}{
-  // ...
-}
-
-for _, tt := range tests {
-  // ...
-}
-```
-
-并行测试，比如一些专门的循环（例如，生成goroutine或捕获引用作为循环体的一部分的那些循环）
-必须注意在循环的范围内显式地分配循环变量，以确保它们保持预期的值。
-
-```go
-tests := []struct{
-  give string
-  // ...
-}{
-  // ...
-}
-for _, tt := range tests {
-  tt := tt // for t.Parallel
-  t.Run(tt.give, func(t *testing.T) {
-    t.Parallel()
-    // ...
-  })
-}
-```
-
-在上面的例子中，由于下面使用了`t.Parallel()`，我们必须声明一个作用域为循环迭代的`tt`变量。
-如果我们不这样做，大多数或所有测试都会收到一个意外的`tt`值，或者一个在运行时发生变化的值。
-
 ### 功能选项
 
 功能选项是一种模式，您可以在其中声明一个不透明 Option 类型，该类型在某些内部结构中记录信息。您接受这些选项的可变编号，并根据内部结构上的选项记录的全部信息采取行动。
@@ -3552,6 +3646,45 @@ func Open(
 <!-- TODO: replace this with parameter structs and functional options, when to
 use one vs other -->
 
+### 偏向使用纯函数
+
+在计算机编程中，如果下列关于函数的两种说法都成立，那么一个函数就可以被认为是纯函数:
+
+1. 该函数总是在给定相同参数值的情况下计算相同的结果值。函数结果值不能依赖于任何隐藏的信息或状态，这些信息或状态可能在程序执行过程中或程序的不同执行之间发生变化，也不能依赖于来自 I/O 设备的任何外部输入
+2. 对结果的评估不会引起任何语义上可观察到的副作用或输出，例如可变对象的突变或输出到 I/O 设备
+
+<table>
+<thead><tr><th>Bad</th><th>Good</th></tr></thead>
+<tbody>
+<tr><td>
+
+```go
+func MarshalAndWrite(some *Thing) error {
+	b, err := json.Marshal(some)
+	if err != nil {
+		return err
+	}
+
+	return ioutil.WriteFile("some.thing", b, 0644)
+}
+```
+
+</td><td>
+
+```go
+// Marshal is a pure func (even though useless)
+func Marshal(some *Thing) ([]bytes, error) {
+	return json.Marshal(some)
+}
+
+// ...
+```
+
+偏向尽可能使用纯函数，提升可读性和可调试性。
+
+</td></tr>
+</tbody></table>
+
 ## Gotchas，常见坑
 
 ### Reader 接口
@@ -3690,6 +3823,197 @@ golangci-lint 有[various-linters]可供使用。建议将上述linters作为基
 [golangci-lint]: https://github.com/golangci/golangci-lint
 [.golangci.yml]: https://github.com/uber-go/guide/blob/master/.golangci.yml
 [various-linters]: https://golangci-lint.run/usage/linters/
+
+## 单元测试
+
+### 使用断言库
+
+<table>
+<thead><tr><th>Bad</th><th>Good</th></tr></thead>
+<tbody>
+<tr><td>
+
+```go
+func TestAdd(t *testing.T) {
+	actual := 2 + 2
+	expected := 4
+	if (actual != expected) {
+		t.Errorf("Expected %d, but got %d", expected, actual)
+	}
+}
+```
+
+</td><td>
+
+```go
+import "github.com/stretchr/testify/assert"
+
+func TestAdd(t *testing.T) {
+	actual := 2 + 2
+	expected := 4
+	assert.Equal(t, expected, actual)
+}
+```
+
+</td></tr>
+</tbody></table>
+
+使用断言库，提升代码可读性，代码更少，并且保证错误输出的一致性。
+
+### 使用子测试用例组织功能测试
+
+<table>
+<thead><tr><th>Bad</th><th>Good</th></tr></thead>
+<tbody>
+<tr><td>
+
+```go
+func TestSomeFunctionSuccess(t *testing.T) {
+	// ...
+}
+
+func TestSomeFunctionWrongInput(t *testing.T) {
+	// ...
+}
+```
+
+</td><td>
+
+```go
+func TestSomeFunction(t *testing.T) {
+	t.Run("success", func(t *testing.T){
+		//...
+	})
+
+	t.Run("wrong input", func(t *testing.T){
+		//...
+	})
+}
+```
+
+</td></tr>
+</tbody></table>
+
+
+### 表驱动测试
+
+当测试逻辑是重复的时候，通过  [subtests] 使用 table 驱动的方式编写 case 代码看上去会更简洁。
+
+[subtests]: https://blog.golang.org/subtests
+
+<table>
+<thead><tr><th>Bad</th><th>Good</th></tr></thead>
+<tbody>
+<tr><td>
+
+```go
+// func TestSplitHostPort(t *testing.T)
+
+host, port, err := net.SplitHostPort("192.0.2.0:8000")
+require.NoError(t, err)
+assert.Equal(t, "192.0.2.0", host)
+assert.Equal(t, "8000", port)
+
+host, port, err = net.SplitHostPort("192.0.2.0:http")
+require.NoError(t, err)
+assert.Equal(t, "192.0.2.0", host)
+assert.Equal(t, "http", port)
+
+host, port, err = net.SplitHostPort(":8000")
+require.NoError(t, err)
+assert.Equal(t, "", host)
+assert.Equal(t, "8000", port)
+
+host, port, err = net.SplitHostPort("1:8")
+require.NoError(t, err)
+assert.Equal(t, "1", host)
+assert.Equal(t, "8", port)
+```
+
+</td><td>
+
+```go
+// func TestSplitHostPort(t *testing.T)
+
+tests := []struct{
+  give     string
+  wantHost string
+  wantPort string
+}{
+  {
+    give:     "192.0.2.0:8000",
+    wantHost: "192.0.2.0",
+    wantPort: "8000",
+  },
+  {
+    give:     "192.0.2.0:http",
+    wantHost: "192.0.2.0",
+    wantPort: "http",
+  },
+  {
+    give:     ":8000",
+    wantHost: "",
+    wantPort: "8000",
+  },
+  {
+    give:     "1:8",
+    wantHost: "1",
+    wantPort: "8",
+  },
+}
+
+for _, tt := range tests {
+  t.Run(tt.give, func(t *testing.T) {
+    host, port, err := net.SplitHostPort(tt.give)
+    require.NoError(t, err)
+    assert.Equal(t, tt.wantHost, host)
+    assert.Equal(t, tt.wantPort, port)
+  })
+}
+```
+
+</td></tr>
+</tbody></table>
+
+很明显，使用 test table 的方式在代码逻辑扩展的时候，比如新增 test case，都会显得更加的清晰。
+
+我们遵循这样的约定：将结构体切片称为`tests`。 每个测试用例称为`tt`。此外，我们鼓励使用`give`和`want`前缀说明每个测试用例的输入和输出值。
+
+```go
+tests := []struct{
+  give     string
+  wantHost string
+  wantPort string
+}{
+  // ...
+}
+
+for _, tt := range tests {
+  // ...
+}
+```
+
+并行测试，比如一些专门的循环（例如，生成goroutine或捕获引用作为循环体的一部分的那些循环）
+必须注意在循环的范围内显式地分配循环变量，以确保它们保持预期的值。
+
+```go
+tests := []struct{
+  give string
+  // ...
+}{
+  // ...
+}
+for _, tt := range tests {
+  tt := tt // for t.Parallel
+  t.Run(tt.give, func(t *testing.T) {
+    t.Parallel()
+    // ...
+  })
+}
+```
+
+在上面的例子中，由于下面使用了`t.Parallel()`，我们必须声明一个作用域为循环迭代的`tt`变量。
+如果我们不这样做，大多数或所有测试都会收到一个意外的`tt`值，或者一个在运行时发生变化的值。
 
 ## 并发
 
@@ -3850,3 +4174,5 @@ func pushMetricPeriodically(ctx context.Context) {
 4. [CodeReviewComments](https://github.com/golang/go/wiki/CodeReviewComments)
 5. [Golang Development Guide](https://github.com/megaease/community/blob/master/go-development-guide.md)
 6. [CodeReviewConcurrency](https://github.com/golang/go/wiki/CodeReviewConcurrency)
+7. [go-styleguide](https://github.com/bahlo/go-styleguide)
+
