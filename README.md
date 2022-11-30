@@ -4175,4 +4175,4 @@ func pushMetricPeriodically(ctx context.Context) {
 5. [Golang Development Guide](https://github.com/megaease/community/blob/master/go-development-guide.md)
 6. [CodeReviewConcurrency](https://github.com/golang/go/wiki/CodeReviewConcurrency)
 7. [go-styleguide](https://github.com/bahlo/go-styleguide)
-8. [google Go Style](https://google.github.io/styleguide/go/index)
+8. [google Go Style](https://google.github.io/styleguide/go/index), [Google 发布的 Go 语言风格规范](https://mp.weixin.qq.com/s?__biz=MzkyMzIyNjIxMQ==&mid=2247487296&idx=1&sn=1efe72bb9db269fe3bc952c6a208c11a)
